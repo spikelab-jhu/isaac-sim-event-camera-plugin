@@ -1,0 +1,35 @@
+# scratch / outputs
+_tmp/
+*.mp4
+*.h5
+bench**
+bottle_drop_stereo.py
+franka_wrist_cam.py
+trailer**
+.pretrained_checkpoints/
+
+# byte-compiled
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+
+# packaging / distribution
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+.installed.cfg
+
+# envs / tooling
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store

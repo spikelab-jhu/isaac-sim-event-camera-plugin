@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dvs_gen"
+version = "0.1.0"
+description = "DVS (event camera) data generation in Isaac Lab, accelerated by motion-vector frame interpolation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Linli Shi", email = "cnshilinli@gmail.com" }]
+keywords = ["event-camera", "dvs", "isaac-lab", "isaac-sim", "simulation", "optical-flow"]
+
+# NOTE: isaaclab / isaacsim / omni.* / pxr are provided by the Isaac Lab Python
+# environment and are intentionally NOT listed here. Install this package into
+# that environment (e.g. `${ISAACLAB}/isaaclab.sh -p -m pip install -e .`).
+# Base deps for the pure event/warp core. Kept minimal and Isaac-compatible
+# (numpy<2) so that `pip install -e .` into the Isaac Lab Python env — where these
+# are already satisfied — does NOT upgrade anything and break Isaac.
+dependencies = [
+    "torch",
+    "numpy<2",
+    "h5py",
+]
+
+[project.optional-dependencies]
+# Extra libs used by the scripts / visualizers. Isaac Lab already provides these,
+# so Isaac users do not need this extra; it is for running the pure core + scripts
+# outside Isaac. opencv-python is capped to a numpy<2-compatible release.
+full = [
+    "opencv-python<4.11",
+    "scipy",
+    "pyyaml",
+]
+
+[project.urls]
+Repository = "https://github.com/spikelab-jhu/object_dvs_generator"
+
+[tool.setuptools.packages.find]
+include = ["dvs_gen*"]
+
+[tool.setuptools.package-data]
+"dvs_gen.data" = ["**/*.usd", "**/*.usda", "**/*.jpg", "**/*.png", "**/*.hdr", "**/*.exr", "**/*.yaml"]

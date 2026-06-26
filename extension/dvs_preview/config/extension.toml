@@ -1,0 +1,15 @@
+[package]
+version = "0.1.0"
+title = "DVS Preview"
+description = "Live red/blue DVS event preview for dvs_gen cameras in the Isaac Lab GUI"
+category = "Simulation"
+keywords = ["dvs", "event camera", "isaac lab", "isaac sim"]
+authors = ["SPIKE Lab, JHU"]
+
+# No [dependencies] block: omni.ui / omni.usd / omni.kit.app / omni.replicator.core
+# are already loaded by Isaac Sim at runtime, and omni.kit.app is a kit-kernel
+# module that the dependency resolver can't version-resolve (would fail to enable).
+# We just import them in extension.py.
+
+[[python.module]]
+name = "dvs_preview"
