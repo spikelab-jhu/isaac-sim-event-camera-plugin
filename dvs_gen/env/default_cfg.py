@@ -1,15 +1,7 @@
 """
 default_cfg.py
 ==============
-``DVSEnvCfg`` — a clean, minimal, ready-to-run Isaac Lab environment for DVS data
-generation. One stereo :class:`~dvs_gen.sensors.DVSCameraCfg` pair watches a
-single YCB object dropped from a random pose against a randomized dome
-background. This is the config used by ``examples/quickstart.py`` and the
-default for ``scripts/simulate_warp.py``.
-
-It is intentionally small and well-commented so you can copy it and change one
-thing at a time. For the full research configuration (auxiliary annotation
-cameras, etc.) see :class:`dvs_gen.env.env_cfg.MyEnvCfg`.
+``DVSEnvCfg`` — a minimal Isaac Lab environment for DVS data generation.
 """
 from __future__ import annotations
 
@@ -103,5 +95,4 @@ class DVSEnvCfg(ManagerBasedRLEnvCfg):
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
         )
-        self.sim.light = sim_utils.DomeLightCfg(intensity=2000.0, color=(1.0, 1.0, 1.0))
         self.scene.env_spacing = 4.0

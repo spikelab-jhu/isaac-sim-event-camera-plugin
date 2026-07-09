@@ -9,10 +9,6 @@ turn the high-rate stream into DVS events, and write everything to ``--dir``:
     rgb_stereo.mp4     synthesised RGB, cam0 | cam1 side-by-side
     events_stereo.mp4  the DVS events, cam0 | cam1 side-by-side
 
-Run it (inside the Isaac Lab Python env)::
-
-    ${ISAACLAB}/isaaclab.sh -p examples/quickstart.py --enable_cameras --headless
-
 The whole DVS pipeline is the four ``dvs.*`` calls below — everything else is just
 stepping the sim and writing videos.
 """
@@ -27,6 +23,10 @@ parser.add_argument("--dir", type=str, default="/tmp/dvs_quickstart")
 parser.add_argument("--margin", type=int, nargs="+", default=[0],
                     help="over-render this many pixels per side then crop them off "
                          "(1 value = all sides; 4 values = left right top bottom)")
+parser.add_argument("--event_source", default=None, choices=["ldr", "hdr"],
+                    help="OVERRIDE the config's camera event_source. Default: follow the config "
+                         "(set DVSCameraCfg.event_source='hdr' to run the whole pipeline on the "
+                         "linear HDR buffer; RGB video tone-mapped for display).")
 
 from isaaclab.app import AppLauncher
 
@@ -52,8 +52,17 @@ DT_FINE = DT_KEY / K
 OUT_HZ = args.render_hz * K         # effective event rate (for video fps)
 
 
-def render_stereo_event_video(h5_path, out_path, cams=("cam0", "cam1"), H=480, W=640, fps=50, win=5e-3):
-    """Bin both cameras' events into side-by-side frames (red = ON, blue = OFF) -> mp4."""
+def render_stereo_event_video(h5_path, out_path, cams=("cam0", "cam1"), H=480, W=640,
+                              fps=50, sample_hz=None, win=None):
+    """Bin both cameras' events into side-by-side frames (red = ON, blue = OFF) -> mp4.
+
+    ``sample_hz`` = frame sampling rate in SIM time (default: same as ``fps`` =
+    real-time playback); ``fps`` = playback rate of the mp4. Passing the RGB
+    video's sampling/playback rates yields an event video frame-for-frame in
+    sync with it. ``win`` = accumulation window (default: one sample period).
+    """
+    sample_hz = fps if sample_hz is None else sample_hz
+    win = 1.0 / sample_hz if win is None else win
     with h5py.File(h5_path, "r") as f:
         data = {c: (f[f"DVS/{c}"]["x"][:], f[f"DVS/{c}"]["y"][:],
                     f[f"DVS/{c}"]["t"][:].astype(np.float64), f[f"DVS/{c}"]["p"][:])
@@ -61,7 +70,7 @@ def render_stereo_event_video(h5_path, out_path, cams=("cam0", "cam1"), H=480, W
     tmin = min(d[2].min() for d in data.values())
     tmax = max(d[2].max() for d in data.values())
     vw = H264Writer(out_path, W * len(data), H, fps)
-    for tc in np.arange(tmin, tmax, 1.0 / fps):
+    for tc in np.arange(tmin, tmax, 1.0 / sample_hz):
         panes = []
         for c in data:
             x, y, t, p = data[c]
@@ -96,6 +105,16 @@ def main():
         c.width = W0 + L + R
         c.height = H0 + T + Bm
     cfg.events.reinit_dvs.params["margin"] = margin
+    # config-driven: DVSCameraCfg(event_source='hdr') auto-requests HdrColor and
+    # from_scene picks it up. --event_source overrides the config.
+    if args.event_source is not None:
+        for f in ("cam0", "cam1"):
+            getattr(cfg.scene, f).event_source = args.event_source
+    if any(getattr(getattr(cfg.scene, f), "event_source", "ldr") == "hdr" for f in ("cam0", "cam1")):
+        for f in ("cam0", "cam1"):
+            c = getattr(cfg.scene, f)
+            if "HdrColor" not in c.data_types:
+                c.data_types = list(c.data_types) + ["HdrColor"]
     env = ManagerBasedRLEnv(cfg=cfg)
 
     # 2. One object bundles the stereo cameras + event processors + recorder.
@@ -106,11 +125,7 @@ def main():
     vw_rgb = H264Writer(os.path.join(args.dir, "rgb_stereo.mp4"), W * 2, H, int(round(OUT_HZ / 20)))
 
     def frame_cb(_i, frames):
-        panes = []
-        for c in ("cam0", "cam1"):
-            a = frames[c][0, ..., :3].detach()
-            a = a * 255.0 if float(a.max()) <= 1.001 else a
-            panes.append(a.clamp(0, 255).byte().cpu().numpy())
+        panes = [dvs.display_u8(frames[c][0]) for c in ("cam0", "cam1")]   # tone-maps HDR for display
         vw_rgb.write(cv2.cvtColor(np.concatenate(panes, axis=1), cv2.COLOR_RGB2BGR))
 
     actions = torch.zeros((env.num_envs, 0), device=env.device)
@@ -121,8 +136,15 @@ def main():
 
     # 3. Main loop: step -> warp the gap -> emit events (all in warp_and_process).
     for _ in range(args.keyframes):
-        env.step(actions)
+        _, _, terminated, truncated, _ = env.step(actions)
         cur = dvs.snapshot()
+        if bool(torch.logical_or(terminated, truncated).any()):
+            # The env auto-reset inside step: the object teleported back to its
+            # spawn pose and the reset event re-randomized the background. Stop
+            # recording HERE so the episode file holds one continuous drop with
+            # one background — warping across the jump would fabricate events.
+            print("[quickstart] episode ended (object dropped) — stopping recording", flush=True)
+            break
         dvs.warp_and_process(prev, cur, K, t_prev, DT_FINE, frame_cb=frame_cb)
         prev = cur
         t_prev = float(env.sim.current_time)
@@ -132,7 +154,10 @@ def main():
     vw_rgb.release()
 
     h5_path = os.path.join(args.dir, "env0_ep0.h5")
-    render_stereo_event_video(h5_path, os.path.join(args.dir, "events_stereo.mp4"), H=H, W=W)
+    # Same sampling (one frame per fine frame) and playback rate as the RGB video,
+    # so rgb_stereo.mp4 and events_stereo.mp4 run frame-for-frame in sync.
+    render_stereo_event_video(h5_path, os.path.join(args.dir, "events_stereo.mp4"), H=H, W=W,
+                              fps=int(round(OUT_HZ / 20)), sample_hz=OUT_HZ)
     print(f"[quickstart] done -> {args.dir}\n"
           f"  events : {h5_path}  (groups DVS/cam0, DVS/cam1)\n"
           f"  rgb    : rgb_stereo.mp4     (cam0 | cam1)\n"

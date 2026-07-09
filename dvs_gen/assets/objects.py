@@ -11,7 +11,7 @@ from isaaclab.sim import SimulationContext
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.utils import configclass
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg, RigidObject
+from isaaclab.assets import ArticulationCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.managers import (
     ObservationGroupCfg,
@@ -36,13 +36,6 @@ YCB_OBJECTS: dict[str, str] = {
         "wood_block",
     )
 }
-
-
-_spawned: bool = False
-_dropped_object: RigidObject | None = None
-_dropped_cfg:    RigidObjectCfg | None = None
-
-
 
 
 

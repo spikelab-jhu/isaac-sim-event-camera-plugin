@@ -1,15 +1,14 @@
 """
-termination.py
-==============
-Termination condition: the tracked object has moved outside the
-field of view of DVS cam0.
+terminations.py
+===============
+Termination conditions for the DVS environments:
 
-Projection pipeline
--------------------
-world_pos  →  cam0_frame  →  (u, v) pixel  →  in/out of [0,W]×[0,H]
+* timeout        — episode time limit (mdp.time_out)
+* object_dropped — tracked object fell below a minimum height
+                   (mdp.root_height_below_minimum)
 
-Works for both pinhole (xi=0) and omni (xi>0) models loaded from
-the Kalibr-style YAML via load_calibration().
+A commented-out out-of-FOV check (projecting the object into cam0's
+image plane) is kept below as possible future work.
 """
 
 from __future__ import annotations

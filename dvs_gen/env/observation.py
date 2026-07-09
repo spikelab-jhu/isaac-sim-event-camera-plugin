@@ -27,11 +27,6 @@ def obs_camera_pose(env, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """
     sensor = env.scene[sensor_cfg.name]
 
-    intrinsics_tensor = sensor.data.intrinsic_matrices
-
-    # Get the 3x3 intrinsic matrix for the very first camera (index 0)
-    K = intrinsics_tensor[0]
-
     return torch.cat([sensor.data.pos_w, sensor.data.quat_w_ros], dim=-1)
 
 def obs_object_pose(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:

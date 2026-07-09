@@ -17,10 +17,6 @@ The event math mirrors ``dvs_gen.dvs.BatchedMultiCamProcessor`` but is inlined
 here (as numpy) so the extension has no dependency on the dvs_gen package being
 importable inside the Kit Python.
 
-NOTE: the Replicator-in-interactive-GUI wiring (does an attached render product
-update live without an explicit orchestrator step?) and the exact
-``ByteImageProvider.set_bytes_data`` signature are the two things to confirm on
-the first GUI run; everything else is plain bookkeeping.
 """
 import time
 
@@ -37,7 +33,7 @@ PREVIEW_ATTR = "dvs:preview"
 THRESHOLD_ATTR = "dvs:threshold"
 
 PREVIEW_W, PREVIEW_H = 320, 240     # low-res preview — "just enough to read"
-MIN_UPDATE_DT = 0.1                 # ~10 Hz refresh (he said low rate is fine)
+MIN_UPDATE_DT = 0.1                 # ~10 Hz refresh
 MAX_PREVIEWS = 4                    # safety cap (avoid one window per cloned env)
 
 
@@ -49,8 +45,13 @@ class _EventVis:
         self.ref = None
 
     def step(self, rgb):
-        rgb = np.asarray(rgb)[..., :3].astype(np.float32)
-        if rgb.size and rgb.max() > 1.5:            # uint8 / LDR → [0,1]
+        rgb = np.asarray(rgb)
+        # Decide the value range by DTYPE, not by max(): a max()-based guess
+        # misreads a near-black uint8 frame (max <= 1) as [0,1] float, which
+        # jumps the log-intensity scale and flashes a screenful of fake events.
+        is_int = np.issubdtype(rgb.dtype, np.integer)
+        rgb = rgb[..., :3].astype(np.float32)
+        if is_int:                                  # uint8 / LDR → [0,1]
             rgb = rgb / 255.0
         inten = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
         logi = np.log(inten + 1e-5)

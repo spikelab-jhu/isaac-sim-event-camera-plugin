@@ -1,9 +1,9 @@
 """
 visualize_event.py
 ==================
-Render the DVS events saved by simulate.py / simulate_warp.py into a stereo
+Render the DVS events saved by simulate_warp.py into a stereo
 side-by-side video. Events are binned into frames at --fps; each frame shows the
-events that fell within the last --interval_ms (red = ON, blue = OFF).
+events in the --interval_ms window starting at its timestamp (red = ON, blue = OFF).
 
   python ./scripts/visualize_event.py --dir /tmp/multi_cam_dvs --env 0 --eps 0 \
          --fps 50 --interval_ms 5
@@ -32,9 +32,10 @@ H, W = args.height, args.width
 
 
 def load_cam(f, cam):
+    # keep native dtypes (x,y uint16; p int8) — upcasting 100M+ events to int64 for
+    # both cameras exhausts RAM and silently corrupts the load (NaN/garbage t).
     g = f[f"DVS/{cam}"]
-    return (g["x"][:].astype(np.int64), g["y"][:].astype(np.int64),
-            g["t"][:].astype(np.float64), g["p"][:].astype(np.int64))
+    return (g["x"][:], g["y"][:], g["t"][:], g["p"][:])
 
 
 def frame_at(ev, t0, t1):

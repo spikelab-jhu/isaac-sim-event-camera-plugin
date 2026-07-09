@@ -1,5 +1,5 @@
 """
-env_cfg.py — Isaac Lab RL environment config with background randomization
+events.py — custom event functions (stereo camera init, background randomization hooks) for the DVS environments.
 """
 
 from __future__ import annotations
@@ -51,11 +51,12 @@ def initialize_stereo_cameras(
         margin=(0, 0, 0, 0),     # (left, right, top, bottom) over-render in pixels
         ):
     """
-    Reads Kalibr YAML, injects USD intrinsics/distortions, and sets batched global poses for event camera and annotation cams.
-    
+    Reads the Kalibr YAML and sets batched world poses and intrinsic matrices for the event camera and annotation cams.
+
     Args:
         env: The Isaac Lab environment instance.
         yaml_path: Path to the Kalibr calibration YAML.
+        pixel_size_um: Currently unused (kept for API compatibility).
         T_w_c0_np: 4x4 numpy array representing the global pose of cam0.
     """
     device = env.device
@@ -98,7 +99,6 @@ def initialize_stereo_cameras(
     quat1_tensor = torch.tensor([quat1] * num_envs, dtype=torch.float32, device=device)
 
     # 4. Apply Poses via Isaac Lab Sensor API
-    print('camera_pose_readout ',  quat0_tensor)
     env.scene["cam0"].set_world_poses(pos0_tensor, quat0_tensor, convention = 'ros')
     env.scene["cam1"].set_world_poses(pos1_tensor, quat1_tensor, convention = 'ros')
 
@@ -122,7 +122,7 @@ def initialize_stereo_cameras(
             K[1, 2] += m_top    # cy += top  margin
     K_batched_0 = K_cam0.unsqueeze(0).repeat(num_envs, 1, 1)
     K_batched_1 = K_cam1.unsqueeze(0).repeat(num_envs, 1, 1)
-    # 4. Apply to the camera
+    # 5. Apply to the camera
 
     env.scene["cam1"].set_intrinsic_matrices(K_batched_1)
     env.scene["cam0"].set_intrinsic_matrices(K_batched_0)
@@ -133,7 +133,7 @@ def initialize_stereo_cameras(
     except KeyError:
         pass
 
-    # 5. Inject Distortion and Intrinsics directly into the USD Prims
+    # 6. Inject Distortion and Intrinsics directly into the USD Prims
     # for i in range(num_envs):
     #     cam0_path = f"/World/envs/env_{i}/cam0"
     #     cam1_path = f"/World/envs/env_{i}/cam1"
@@ -215,14 +215,14 @@ def event_randomize_background(
     env_ids: torch.Tensor,
     texture_folder: str          = _DOME_TEXTURE_DIR,
     use_dome:       bool         = True,
-    use_backdrop:   bool         = True,
+    use_backdrop:   bool         = False,
     backdrop_dist_m:     float   = 3.0,
     backdrop_halfsize_m: float   = 5.0,
 ) -> None:
     """
     EventManager-compatible wrapper.
-    On the very first call it initialises the Replicator graph;
-    every subsequent call just randomizes.
+    On the very first call it creates the dome/backdrop prims directly in USD;
+    every subsequent call just randomizes their textures.
     """
     bg_rand.setup_background_randomizer(
         texture_folder       = texture_folder,
@@ -263,15 +263,17 @@ class MyEventCfg:
     # )
 
     # ── background randomization ───────────────────────────────
+    # use_backdrop=False by default: the textured backdrop quad would stand in
+    # view behind the scene — enable it explicitly for domain randomization.
     randomize_background: EventTerm = EventTerm(
         func=event_randomize_background,
         mode="reset",
         params={
             "texture_folder":       _DOME_TEXTURE_DIR,
             "use_dome":             True,
-            "use_backdrop":         True,
+            "use_backdrop":         False,
             "backdrop_dist_m":      3.0,
-            "backdrop_halfsize_m":                5.0,
+            "backdrop_halfsize_m":  5.0,
         },
     )
 

@@ -2,10 +2,7 @@
 video.py
 ========
 H264Writer: drop-in replacement for cv2.VideoWriter that pipes raw BGR frames
-to the system ffmpeg (libx264) so the output is H.264 — playable in VSCode /
-browsers / HTML5, which the cv2 'mp4v' (MPEG-4 part 2) output is NOT. The cv2
-bundled here has no H.264 encoder, so we go straight to ffmpeg in one pass.
-Falls back to cv2 'mp4v' if ffmpeg is unavailable.
+to the system ffmpeg (libx264) so the output is H.264
 
     vw = H264Writer(path, W, H, fps)
     vw.write(bgr_uint8)   # same as cv2.VideoWriter.write

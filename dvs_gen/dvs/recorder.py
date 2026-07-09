@@ -25,10 +25,15 @@ import h5py
 
 class GeneralDVSRecorder:
     """Thread-safe recorder for multiple envs, multiple cameras, varying episodes."""
-    def __init__(self, output_dir: str = "/tmp/dvs_dataset"):
+    def __init__(self, output_dir: str = "/tmp/dvs_dataset", compression="gzip"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         self._lock = threading.Lock()
+        # HDF5 filter for the event datasets: "gzip" (small files), "lzf" (fast),
+        # or None (uncompressed — maximally robust for very large streams, no
+        # filter that can fail on read). Datasets are written in blocks so a
+        # multi-million-event episode never does one monolithic compressed write.
+        self.compression = compression
 
         # Nested dictionary: env_id -> camera_name -> list of events
         self._events = defaultdict(lambda: defaultdict(list))
@@ -64,6 +69,7 @@ class GeneralDVSRecorder:
 
         filename = os.path.join(self.output_dir, f"env{env_id}_ep{episode_idx}.h5")
 
+        counts = {}
         with h5py.File(filename, "w") as f:
             for cam_name, chunks in env_data.items():
                 if not chunks: continue
@@ -76,10 +82,30 @@ class GeneralDVSRecorder:
                 ys = np.concatenate([c[1] for c in chunks]).astype(np.uint16)
                 ts = np.concatenate([c[2] for c in chunks]).astype(np.float64)
                 ps = np.concatenate([c[3] for c in chunks]).astype(np.int8)
+                counts[cam_name] = int(xs.shape[0])
 
-                grp.create_dataset("x", data=xs, compression="gzip")
-                grp.create_dataset("y", data=ys, compression="gzip")
-                grp.create_dataset("t", data=ts, compression="gzip")
-                grp.create_dataset("p", data=ps, compression="gzip")
+                # Write each dataset in blocks rather than one monolithic
+                # create_dataset(data=...): a single ~100M-event compressed write
+                # can corrupt a filter chunk; block writes through the chunk cache
+                # are the robust path for very large event streams.
+                self._write_blocked(grp, "x", xs)
+                self._write_blocked(grp, "y", ys)
+                self._write_blocked(grp, "t", ts)
+                self._write_blocked(grp, "p", ps)
 
-        print(f"[Recorder] Saved Env {env_id} (Ep {episode_idx}) w/ {len(env_data)} cameras -> {filename}")
+        summary = ", ".join(f"{k}={v:,}" for k, v in counts.items())
+        print(f"[Recorder] Saved Env {env_id} (Ep {episode_idx}) w/ {len(env_data)} cameras "
+              f"[{summary}] comp={self.compression} -> {filename}")
+
+    def _write_blocked(self, grp, name, arr, block: int = 8_000_000):
+        """Create a 1-D dataset and fill it in ``block``-sized slices."""
+        n = int(arr.shape[0])
+        if n == 0:
+            grp.create_dataset(name, shape=(0,), dtype=arr.dtype)
+            return
+        # compression requires chunked storage; uncompressed stays contiguous
+        chunks = True if self.compression else None
+        ds = grp.create_dataset(name, shape=(n,), dtype=arr.dtype,
+                                compression=self.compression, chunks=chunks)
+        for i in range(0, n, block):
+            ds[i:i + block] = arr[i:i + block]

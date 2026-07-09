@@ -3,15 +3,6 @@ interpolation.py
 ================
 Pluggable frame-interpolation strategies that accelerate the slow sim->RGB step.
 
-Idea
-----
-Rendering an RTX frame is the only expensive part of the pipeline; turning RGB
-into DVS events is cheap. So we render a real frame only every ``K`` physics
-steps (a "keyframe") and *synthesize* the ``K-1`` frames in between cheaply.
-Those synthesized frames are fed to the DVS event generator exactly like real
-ones. Because DVS only reacts to brightness *changes*, an approximate
-intermediate frame is good enough to produce plausible events.
-
 Design
 ------
 Strategies are registered by name so new interpolation methods can be added
@@ -39,9 +30,6 @@ Notes / assumptions
 * The camera is assumed to be rendered once per keyframe gap
   (``render_interval == K``) so each motion-vector field spans the whole gap;
   the intermediate at fraction ``f = i/K`` moves content by ``f`` of it.
-
-This module currently exposes only the strategy INTERFACE (registry + base
-class + a stubbed motion-vector strategy); the warp implementation was removed.
 """
 from __future__ import annotations
 
@@ -213,21 +201,49 @@ def _splat_batch(img, dx, dy, imp, hw=1.0, beta=12.0):
     return out, holes
 
 
+def dilate_mv(mv, radius=1):
+    """Grow the larger-magnitude motion over its neighbourhood so a moving
+    object's motion vector covers its own anti-aliased silhouette fringe.
+
+    The renderer anti-aliases the colour edge (the 1-px fringe is object-tinted)
+    but classifies the motion vector per pixel, so that fringe is tagged with the
+    static background's zero motion. Splatting then leaves the fringe behind at
+    the object's keyframe position — a faint ghost outline that fires spurious
+    events. Extending the object mv outward by ``radius`` px makes the fringe
+    travel with the object and removes the ghost. ``mv``: ``(...,H,W,2)``.
+    """
+    if radius <= 0:
+        return mv
+    mag = mv.pow(2).sum(-1)
+    best_mag, best_mv = mag.clone(), mv.clone()
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dx == 0 and dy == 0:
+                continue
+            sm = torch.roll(mag, shifts=(dy, dx), dims=(-2, -1))
+            sv = torch.roll(mv, shifts=(dy, dx), dims=(-3, -2))
+            take = sm > best_mag
+            best_mag = torch.where(take, sm, best_mag)
+            best_mv = torch.where(take.unsqueeze(-1), sv, best_mv)
+    return best_mv
+
+
 def bidir_warp_gap(A, B, mvA, mvB, K, composite="b_primary",
                    depthA=None, depthB=None, hw=1.0, beta=12.0,
-                   fill_holes=True, covis_z=False):
+                   fill_holes=True, covis_z=False, hole_fill=None, mv_dilate=0):
     """Single-mv-per-gap bidirectional warp (the 125/250Hz-mv case).
 
     One real mv field per keyframe gap (the WHOLE-gap displacement, convention
     earlier-pos = pos + mv), so motion is taken as straight-line across the gap:
     forward-warp the previous keyframe A by ``f`` using ``mvA``, backward-warp the
-    next keyframe B by ``1-f`` using ``mvB``, then composite. Double-occluded
-    pixels stay black (genuinely unknown — no colour is fabricated). This is the
-    warp used by both the offline naive-125 comparison and the e2e benchmark.
+    next keyframe B by ``1-f`` using ``mvB``, then composite. This is the warp
+    used by both the offline naive-125 comparison and the e2e benchmark.
 
-    Composite is always B-primary: the backward-warped B is the source of truth
-    wherever B has content; A is used ONLY to fill B's disocclusion holes; pixels
-    occluded in BOTH stay black (genuinely unknown — no colour is fabricated).
+    Composite is B-primary: the backward-warped B is the source of truth
+    wherever B has content; A is used ONLY to fill B's disocclusion holes (see
+    ``covis_z`` for the depth-aware variant). Pixels occluded in BOTH default to
+    black (genuinely unknown — no colour is fabricated) unless ``hole_fill``
+    supplies a constant.
 
     Depth, when given, resolves COLLISIONS inside each splat: the importance
     becomes ``1/depth`` so the nearer (foreground) source wins when several source
@@ -241,14 +257,20 @@ def bidir_warp_gap(A, B, mvA, mvB, K, composite="b_primary",
 
     A,B  : (H,W,C) OR batched (N,H,W,C) float on GPU.  mvA,mvB : (..,H,W,2).
     depthA,depthB : (..,H,W) per-pixel depth of keyframe A / B (metres).
+    ``mv_dilate`` (px): grow each mv field over its anti-aliased edge fringe
+    before splatting (see :func:`dilate_mv`); removes the boundary ghost outline.
     Every env, both splat directions and all K-1 intermediate frames run as ONE
     batch (M = N*(K-1) per direction). Returns the K-1 intermediates at fractions
     ``1/K..(K-1)/K``, each (H,W,C) for single input or (N,H,W,C) for batched."""
+    if composite != "b_primary":
+        raise ValueError(f"unknown composite {composite!r}; only 'b_primary' is supported")
     single = A.dim() == 3
     if single:
         A, B, mvA, mvB = A[None], B[None], mvA[None], mvB[None]
         if depthA is not None:
             depthA, depthB = depthA[None], depthB[None]
+    if mv_dilate:
+        mvA, mvB = dilate_mv(mvA, mv_dilate), dilate_mv(mvB, mv_dilate)
     if K == 1:
         return []
     N, H, W, C = A.shape
@@ -293,11 +315,12 @@ def bidir_warp_gap(A, B, mvA, mvB, K, composite="b_primary",
     m = wB.clone()                                # default: co-visible + B-only -> B (primary)
     if z_covis:
         m = torch.where(((~hA) & (~hB) & (wzA < wzB)).unsqueeze(1), wA, m)   # nearer real surface
-    elif composite == "avg" and not use_z:
-        m = torch.where(((~hA) & (~hB)).unsqueeze(1), 0.5 * (wA + wB), m)
     if fill_holes:
         m = torch.where(only_a, wA, m)            # B's disocclusion hole -> fill from A
-    m = torch.where(neither, torch.zeros_like(m), m)            # double-occlusion -> black
+    # double-occlusion: black by default (unknown, no fabrication); or a constant
+    # ``hole_fill`` (e.g. the background level) so holes vanish on a uniform backdrop.
+    fill = torch.zeros_like(m) if hole_fill is None else torch.full_like(m, float(hole_fill))
+    m = torch.where(neither, fill, m)
     m = m.reshape(N, Kn, C, H, W).permute(0, 1, 3, 4, 2)        # (N,Kn,H,W,C)
     outs = [m[:, i] for i in range(Kn)]
     if single:

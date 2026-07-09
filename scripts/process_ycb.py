@@ -90,13 +90,14 @@ def main():
     ISAAC_OBJECTS = {}
 
     if result != omni.client.Result.OK:
-        print(f"Error: Failed to access Nucleus server. Make sure Omniverse Nucleus is running.")
+        print("Error: Failed to list the Isaac assets S3 bucket. Check your network connection.")
         simulation_app.close()
         return
     for entry in entries:
         filename = entry.relative_path
         if filename.endswith(".usd"):
-            # Strip the .usd extension for the dictionary key
+            # Strip the 4-char numeric prefix (e.g. "003_") and the ".usd" suffix
+            # so the dictionary key matches the YCB_OBJECTS names
             obj_name = filename[4:-4]
             full_url = f"{ISAAC_NUCLEUS_DIR}/{filename}"
             ISAAC_OBJECTS[obj_name] = full_url

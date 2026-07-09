@@ -20,9 +20,6 @@ Outputs (per env, per episode) into ``--dir``:
   annotation_env{e}_ep{ep}.json    per-keyframe object pose / velocity
   rgb_env{e}_ep{ep}_cam{c}.mp4     synthesised RGB stream (env 0 only; --no_rgb to skip)
 
-Run:
-  ${ISAACLAB}/isaaclab.sh -p scripts/simulate_warp.py \
-      --num_envs 1 --render_hz 125 --warp 8 --max_episodes 3 --enable_cameras --headless
 """
 import argparse
 import os
@@ -34,7 +31,12 @@ parser.add_argument("--render_hz", type=float, default=125, help="keyframe rende
 parser.add_argument("--warp", type=int, default=8,
                     help="warp multiplier K: render keyframes at render_hz and warp K× to get "
                          "events at render_hz*K (integer >= 1; use 1 or --no_warp for no warp)")
-parser.add_argument("--composite", default="b_primary", choices=["avg", "b_primary"])
+parser.add_argument("--composite", default="b_primary", choices=["b_primary"],
+                    help="warp composite strategy (only b_primary is implemented)")
+parser.add_argument("--mv_dilate", type=int, default=0,
+                    help="motion-vector dilation radius (px) before the warp splat; grows each "
+                         "object's mv over its anti-aliased edge to remove the boundary ghost "
+                         "outline. 0 = off (default), 1 = on")
 parser.add_argument("--max_episodes", type=int, default=3, help="stop after env 0 has finished this many episodes")
 parser.add_argument("--dir", type=str, default="/tmp/multi_cam_dvs")
 parser.add_argument("--no_rgb", action="store_true", help="do not save the RGB mp4 stream")
@@ -47,6 +49,10 @@ parser.add_argument("--margin", type=int, nargs="+", default=[0],
                          "1 value = all sides; 4 values = left right top bottom")
 parser.add_argument("--breakdown", action="store_true",
                     help="time render / warp / dvs segments separately (adds cuda syncs)")
+parser.add_argument("--event_source", default=None, choices=["ldr", "hdr"],
+                    help="OVERRIDE the config's camera event_source. Default: follow the config "
+                         "(set DVSCameraCfg.event_source='hdr' to make the whole pipeline run on the "
+                         "linear HDR buffer — physically correct events, RGB tone-mapped for display).")
 
 from isaaclab.app import AppLauncher
 
@@ -118,13 +124,23 @@ def main():
         c.width = W0 + L + R
         c.height = H0 + T + B
     cfg.events.reinit_dvs.params["margin"] = margin           # shift principal point
+    # config-driven: DVSCameraCfg(event_source='hdr') auto-requests HdrColor and
+    # from_scene picks it up. --event_source overrides the config.
+    if args.event_source is not None:
+        for f in ("cam0", "cam1"):
+            getattr(cfg.scene, f).event_source = args.event_source
+    if any(getattr(getattr(cfg.scene, f), "event_source", "ldr") == "hdr" for f in ("cam0", "cam1")):
+        for f in ("cam0", "cam1"):
+            c = getattr(cfg.scene, f)
+            if "HdrColor" not in c.data_types:
+                c.data_types = list(c.data_types) + ["HdrColor"]
 
     env = ManagerBasedRLEnv(cfg=cfg)
     os.makedirs(args.dir, exist_ok=True)
 
     # ── the DVS abstraction: cameras + processors + recorder in one ──
     dvs = DVSCamera.from_scene(env.scene, ["cam0", "cam1"], out_dir=args.dir,
-                               composite=args.composite, margin=margin)
+                               composite=args.composite, margin=margin, mv_dilate=args.mv_dilate)
 
     episode_counts = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
     annotations = [[] for _ in range(env.num_envs)]
@@ -150,10 +166,7 @@ def main():
         if not save_rgb:
             return
         for c, name in ((0, "cam0"), (1, "cam1")):
-            a = frames[name][0, ..., :3].detach()        # env 0
-            if float(a.max()) <= 1.001:
-                a = a * 255.0
-            img = a.clamp(0, 255).byte().cpu().numpy()
+            img = dvs.display_u8(frames[name][0])            # env 0; tone-maps HDR for the video
             rgb_writers[c].write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
     actions = torch.zeros((env.num_envs, 0), device=env.device)
@@ -202,7 +215,9 @@ def main():
         cur = dvs.snapshot()
         tb = sync_now(); acc["render"] += tb - ta
         t_cur = float(env.sim.current_time)
-        step_anno = parse_annotation(obs["policy"], t_prev)
+        # obs is the POST-step state, so the annotation carries t_cur (stamping it
+        # t_prev mislabelled every pose one keyframe early).
+        step_anno = parse_annotation(obs["policy"], t_cur)
 
         resets = torch.logical_or(terminated, truncated)
         if resets.any():

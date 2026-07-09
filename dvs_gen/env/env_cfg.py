@@ -39,7 +39,7 @@ class MyRewardCfg:
     pass
 
 @configclass
-class MyEnvCfg(ManagerBasedRLEnvCfg):          # swap for ManagerBasedRLEnvCfg if needed
+class MyEnvCfg(ManagerBasedRLEnvCfg):
 
     # Re-render the RTX cameras twice after each reset so cameras reflect the
     # post-reset scene (new background + object pose) before recording.
@@ -76,10 +76,4 @@ class MyEnvCfg(ManagerBasedRLEnvCfg):          # swap for ManagerBasedRLEnvCfg i
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
         )
-        self.sim.light = sim_utils.DomeLightCfg(
-            intensity=2000.0,
-            color=(1.0, 1.0, 1.0),
-        )
-        # Propagate num_envs into scene
-        self.scene.num_envs = 1280
         self.scene.env_spacing = 4.0

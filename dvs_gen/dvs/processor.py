@@ -16,28 +16,45 @@ from .recorder import GeneralDVSRecorder
 
 class BatchedMultiCamProcessor:
     """Processes batched RGB tensors for ONE specific camera across ALL envs."""
-    def __init__(self, recorder: GeneralDVSRecorder, camera_name: str, threshold: float = 0.15):
+    def __init__(self, recorder: GeneralDVSRecorder, camera_name: str, threshold: float = 0.15,
+                 noise=None):
         self.recorder = recorder
         self.camera_name = camera_name
         self.threshold = threshold
+        # optional DVSNoiseModel (dvs_gen.dvs.noise). None = the ideal clean model.
+        self.noise = noise
         self.ref_log_intensity = None
         self.needs_reset_mask = None # Tracks which envs need a new reference frame
+        # opt-in: keep this call's (pos_mask, neg_mask) so a caller can render the
+        # per-frame event image aligned to the warped RGB frame. Off = zero overhead.
+        self.stash_events = False
+        self.last_masks = None
 
     def reset_envs(self, env_ids: torch.Tensor):
         """Flags specific environments to grab a fresh reference frame."""
         if self.needs_reset_mask is not None and len(env_ids) > 0:
             self.needs_reset_mask[env_ids] = True
+            if self.noise is not None:
+                self.noise.reset_envs(env_ids)         # re-seed the bandwidth filter state
 
     def __call__(self, rgb_batch: torch.Tensor, current_time: float):
         # rgb_batch: (num_envs, H, W, C)
         num_envs = rgb_batch.shape[0]
         device = rgb_batch.device
+        if self.stash_events:
+            self.last_masks = None      # cleared per call; set below once masks exist
 
         if rgb_batch.shape[-1] == 4:
             rgb_batch = rgb_batch[..., :3]
 
         intensity = (0.2126 * rgb_batch[..., 0] + 0.7152 * rgb_batch[..., 1] + 0.0722 * rgb_batch[..., 2])
         log_intensity = torch.log(intensity + 1e-5)
+
+        # Intensity-dependent photoreceptor bandwidth (noise model hook 0): lowpass
+        # the log frame BEFORE the reference logic so the whole event model sees the
+        # filtered signal. cutoff_hz == 0 (default) returns it untouched.
+        if self.noise is not None:
+            log_intensity = self.noise.bandwidth_filter(log_intensity, intensity, current_time)
 
         # Initialization
         if self.ref_log_intensity is None:
@@ -51,14 +68,28 @@ class BatchedMultiCamProcessor:
             self.needs_reset_mask.fill_(False)
             # We don't generate events for the reset frame itself
 
-        # 2. Compute differences
+        # 2. Compute differences. With a noise model, use PER-PIXEL thresholds
+        # (fixed-pattern mismatch); otherwise the single scalar threshold.
         diff = log_intensity - self.ref_log_intensity
-        pos_mask = diff >= self.threshold
-        neg_mask = diff <= -self.threshold
+        if self.noise is not None:
+            th_on, th_off = self.noise.thresholds(log_intensity.shape[1:], device)
+            pos_mask = diff >= th_on
+            neg_mask = diff <= -th_off
+        else:
+            pos_mask = diff >= self.threshold
+            neg_mask = diff <= -self.threshold
 
-        # Update reference intensities where thresholds were exceeded
+        # Update reference where the SIGNAL crossed threshold (before noise). Refractory
+        # only suppresses the recorded event, not the reference — avoids drift.
         self.ref_log_intensity[pos_mask] = log_intensity[pos_mask]
         self.ref_log_intensity[neg_mask] = log_intensity[neg_mask]
+
+        # Sensor noise: inject background/leak/shot/hot events + enforce refractory.
+        if self.noise is not None:
+            pos_mask, neg_mask = self.noise.apply(pos_mask, neg_mask, intensity, current_time)
+
+        if self.stash_events:               # final recorded masks (incl. noise) for the event image
+            self.last_masks = (pos_mask, neg_mask)
 
         # 3. Extract events
         if pos_mask.any() or neg_mask.any():

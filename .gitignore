@@ -1,13 +1,31 @@
 # scratch / outputs
+author_scene**
+dump_warp**
+flow_all**
+run_bench**
+simulate_bottle**
+simulate_warehouse**
+simulate_desk**
+setup_e2vid.py
+e2vid_reconstruct.py
+warehouse_cfg.py
+scene/
+paper_arXiv/
+simulate_wh_stereo.py
+
 _tmp/
-*.mp4
+# *.mp4
 *.h5
 bench**
 bottle_drop_stereo.py
 franka_wrist_cam.py
 trailer**
 .pretrained_checkpoints/
-
+paper/
+paper**
+tests/
+scripts/gen_benchmark_data.py
+scripts/run_benchmark_gen.sh
 # byte-compiled
 __pycache__/
 *.py[codz]
