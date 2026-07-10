@@ -2,6 +2,7 @@
   <h1>EVIS: A Physics-Grounded Event Camera Plugin for NVIDIA Isaac Sim</h1>
   <p><strong>High rate event camera data simulation in <a href="https://developer.nvidia.com/isaac/sim?size=n_6_n&sort-field=featured&sort-direction=desc">Isaac Sim</a>, accelerated by motion-vector frame interpolation.</strong></p>
   <p>
+    <a href="https://arxiv.org/abs/2607.08098"><img src="https://img.shields.io/badge/arXiv-2607.08098-b31b1b.svg" alt="arXiv"></a>&nbsp;
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>&nbsp;
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white" alt="Python"></a>&nbsp;
     <a href="https://isaac-sim.github.io/IsaacLab/"><img src="https://img.shields.io/badge/Built%20for-Isaac%20Sim-76b900?logo=nvidia&logoColor=white" alt="Built for Isaac Sim"></a>
@@ -15,8 +16,8 @@
 
 ## 📰 News
 
-- **[2026-07]** 📄 We released a [technical report](report/EVIS_report.pdf), check it out!
-- **[2026-07]** ✨ v1.0: New features: HDR support, multiple sensor noise models, motion blur, anti-aliasing control, and a PyTorch dataloader for easy downstream-task training. Read our [technical report](report/EVIS_report.pdf) for more details.
+- **[2026-07]** 📄 We released a [technical report](https://arxiv.org/abs/2607.08098), check it out!
+- **[2026-07]** ✨ v1.0: New features: HDR support, multiple sensor noise models, motion blur, anti-aliasing control, and a PyTorch dataloader for easy downstream-task training. Read our [technical report](https://arxiv.org/abs/2607.08098) for more details.
 
 ## 📖 Overview
 <div align="center">
@@ -255,19 +256,18 @@ One HDF5 file per (env, episode): `env{e}_ep{ep}.h5`, with a group per camera (`
 
 The bundled `data/ycb_objects/*.usd` are physics-enabled conversions of the [YCB object set](https://www.ycbbenchmarks.com/) (originally distributed via NVIDIA Isaac assets). Regenerate or extend them with `scripts/process_ycb.py`.
 
-<!-- ## Citation
+## Citation
 
 If you find this plugin useful, please cite our technical report:
 
 ```bibtex
-@techreport{shi2026eventplugin,
-  title       = {An Event Camera Plugin for NVIDIA Isaac Sim: Technical Report},
-  author      = {Shi, Linli and Zhang, Ruijun and Wang, Ziyun},
-  institution = {Johns Hopkins University},
-  year        = {2026},
-  note        = {arXiv:XXXX.XXXXX}
+@article{shi2026evis,
+  title={EVIS: A Physics-Grounded Event Camera Plugin for NVIDIA Isaac Sim},
+  author={Shi, Linli and Zhang, Ruijun and Wang, Ziyun},
+  journal={arXiv preprint arXiv:2607.08098},
+  year={2026}
 }
-``` -->
+```
 
 ## License
 
